@@ -12,7 +12,7 @@ body {
     display: flex;
     flex-direction: column;
     font-family: system-ui, Arial, sans-serif;
-    background: #eaeaea;
+    background: #ffffff;
 }
 
 header {
@@ -54,7 +54,7 @@ button:hover {
 #canvasWrapper {
     flex: 1;
     overflow: hidden;
-    background: #999;
+    background: white;
 }
 
 #canvasContainer {
@@ -83,6 +83,7 @@ canvas {
         <option value="brush">Brush</option>
         <option value="eraser">Eraser</option>
         <option value="fill">Bucket</option>
+        <option value="screenFill">Screen Fill</option>
     </select>
 
     <label>Color</label>
@@ -93,6 +94,10 @@ canvas {
 
     <label>Opacity</label>
     <input type="range" id="opacity" min="0" max="1" step="0.01" value="1">
+
+    <label>Presets</label>
+    <select id="presetSelect"></select>
+    <button id="savePreset">Save Preset</button>
 
     <button id="undo">Undo</button>
     <button id="redo">Redo</button>
@@ -108,6 +113,10 @@ canvas {
 
     <label>Zoom</label>
     <input type="range" id="zoom" min="0.5" max="3" step="0.1" value="1">
+
+    <button id="saveProject">Save</button>
+    <button id="loadProject">Load</button>
+    <input type="file" id="fileInput" hidden>
 </div>
 
 <div id="canvasWrapper">
@@ -117,16 +126,19 @@ canvas {
 <script>
 const container = document.getElementById("canvasContainer");
 const layerSelect = document.getElementById("layerSelect");
+const presetSelect = document.getElementById("presetSelect");
 
 let layers = [];
 let activeLayer = 0;
-let tool = toolSelect = document.getElementById("tool").value;
-
 let drawing = false;
-let color = colorInput = document.getElementById("color").value;
-let size = sizeInput = document.getElementById("size").value;
-let opacity = opacityInput = document.getElementById("opacity").value;
 
+let tool = toolEl = document.getElementById("tool").value;
+let color = document.getElementById("color").value;
+let size = document.getElementById("size").value;
+let opacity = document.getElementById("opacity").value;
+
+let zoom = 1;
+let presets = [];
 let undoStack = [];
 let redoStack = [];
 
@@ -136,19 +148,28 @@ document.getElementById("size").oninput = e => size = e.target.value;
 document.getElementById("opacity").oninput = e => opacity = e.target.value;
 
 document.getElementById("zoom").oninput = e => {
-    container.style.transform = `scale(${e.target.value})`;
+    zoom = e.target.value;
+    container.style.transform = `scale(${zoom})`;
 };
+
+document.getElementById("addLayer").onclick = addLayer;
+document.getElementById("toggleLayer").onclick = toggleLayer;
+document.getElementById("layerOpacity").oninput = e => {
+    layers[activeLayer].opacity = e.target.value;
+    layers[activeLayer].canvas.style.opacity = e.target.value;
+};
+
+layerSelect.onchange = () => activeLayer = Number(layerSelect.value);
 
 document.getElementById("undo").onclick = undo;
 document.getElementById("redo").onclick = redo;
-document.getElementById("addLayer").onclick = addLayer;
-document.getElementById("toggleLayer").onclick = toggleLayer;
-document.getElementById("layerOpacity").oninput = setLayerOpacity;
 
-layerSelect.onchange = () => {
-    activeLayer = Number(layerSelect.value);
-    document.getElementById("layerOpacity").value = layers[activeLayer].opacity;
-};
+document.getElementById("savePreset").onclick = savePreset;
+presetSelect.onchange = loadPreset;
+
+document.getElementById("saveProject").onclick = saveProject;
+document.getElementById("loadProject").onclick = () => document.getElementById("fileInput").click();
+document.getElementById("fileInput").onchange = loadProject;
 
 function addLayer() {
     const canvas = document.createElement("canvas");
@@ -164,10 +185,10 @@ function addLayer() {
     });
 
     activeLayer = layers.length - 1;
-    updateLayerUI();
+    updateLayersUI();
 }
 
-function updateLayerUI() {
+function updateLayersUI() {
     layerSelect.innerHTML = "";
     layers.forEach((_, i) => {
         const o = document.createElement("option");
@@ -201,8 +222,8 @@ function rebuildLayers() {
     layers = [...container.querySelectorAll("canvas")].map(c => ({
         canvas: c,
         ctx: c.getContext("2d"),
-        visible: true,
-        opacity: 1
+        visible: c.style.display !== "none",
+        opacity: c.style.opacity || 1
     }));
 }
 
@@ -213,7 +234,16 @@ container.addEventListener("pointerdown", e => {
     saveState();
 
     if (tool === "fill") {
-        floodFill(layer.ctx, e.offsetX, e.offsetY);
+        layer.ctx.fillStyle = color;
+        layer.ctx.globalAlpha = opacity;
+        layer.ctx.fillRect(e.offsetX - 1, e.offsetY - 1, 3, 3);
+        return;
+    }
+
+    if (tool === "screenFill") {
+        layer.ctx.globalAlpha = opacity;
+        layer.ctx.fillStyle = color;
+        layer.ctx.fillRect(0, 0, layer.canvas.width, layer.canvas.height);
         return;
     }
 
@@ -242,24 +272,87 @@ container.addEventListener("pointermove", e => {
 container.addEventListener("pointerup", () => drawing = false);
 container.addEventListener("pointerleave", () => drawing = false);
 
-function floodFill(ctx, x, y) {
-    ctx.fillStyle = color;
-    ctx.globalAlpha = opacity;
-    ctx.fillRect(x - 1, y - 1, 3, 3);
+/* Brush presets */
+function savePreset() {
+    presets.push({ color, size, opacity, tool });
+    updatePresetUI();
 }
 
-function setLayerOpacity(e) {
-    const l = layers[activeLayer];
-    l.opacity = e.target.value;
-    l.canvas.style.opacity = l.opacity;
+function updatePresetUI() {
+    presetSelect.innerHTML = "";
+    presets.forEach((p, i) => {
+        const o = document.createElement("option");
+        o.value = i;
+        o.textContent = `Preset ${i + 1}`;
+        presetSelect.appendChild(o);
+    });
 }
 
-function toggleLayer() {
-    const l = layers[activeLayer];
-    l.visible = !l.visible;
-    l.canvas.style.display = l.visible ? "block" : "none";
+function loadPreset() {
+    const p = presets[presetSelect.value];
+    if (!p) return;
+    color = p.color;
+    size = p.size;
+    opacity = p.opacity;
+    tool = p.tool;
+    document.getElementById("color").value = color;
+    document.getElementById("size").value = size;
+    document.getElementById("opacity").value = opacity;
+    document.getElementById("tool").value = tool;
 }
 
+/* Project save/load */
+function saveProject() {
+    const data = {
+        presets,
+        layers: layers.map(l => ({
+            image: l.canvas.toDataURL(),
+            opacity: l.opacity,
+            visible: l.visible
+        }))
+    };
+
+    const blob = new Blob([JSON.stringify(data)], { type: "application/json" });
+    const a = document.createElement("a");
+    a.href = URL.createObjectURL(blob);
+    a.download = "paint.a.json";
+    a.click();
+}
+
+function loadProject(e) {
+    const file = e.target.files[0];
+    if (!file) return;
+
+    const reader = new FileReader();
+    reader.onload = () => {
+        const data = JSON.parse(reader.result);
+        container.innerHTML = "";
+        layers = [];
+
+        data.layers.forEach(l => {
+            const canvas = document.createElement("canvas");
+            canvas.width = container.clientWidth;
+            canvas.height = container.clientHeight;
+            canvas.style.opacity = l.opacity;
+            canvas.style.display = l.visible ? "block" : "none";
+            const ctx = canvas.getContext("2d");
+
+            const img = new Image();
+            img.onload = () => ctx.drawImage(img, 0, 0);
+            img.src = l.image;
+
+            container.appendChild(canvas);
+            layers.push({ canvas, ctx, opacity: l.opacity, visible: l.visible });
+        });
+
+        presets = data.presets || [];
+        updateLayersUI();
+        updatePresetUI();
+    };
+    reader.readAsText(file);
+}
+
+/* Start */
 addLayer();
 </script>
 
