@@ -24,7 +24,6 @@ canvas,#previewCanvas {position:absolute;inset:0;touch-action:none;cursor:crossh
 <select id="tool">
 <option value="brush">Brush</option>
 <option value="eraser">Eraser</option>
-<option value="bucket">Bucket</option>
 <option value="screenFill">Screen Fill</option>
 <option value="rectangle">Rectangle</option>
 <option value="circle">Circle</option>
@@ -38,10 +37,6 @@ canvas,#previewCanvas {position:absolute;inset:0;touch-action:none;cursor:crossh
 
 <label>Opacity</label>
 <input type="range" id="opacity" min="0" max="1" step="0.01" value="1">
-
-<label>Preset</label>
-<select id="presetSelect"></select>
-<button id="savePreset">Save Preset</button>
 
 <button id="undo">Undo</button>
 <button id="redo">Redo</button>
@@ -70,17 +65,16 @@ canvas,#previewCanvas {position:absolute;inset:0;touch-action:none;cursor:crossh
 <script>
 const container=document.getElementById("canvasContainer");
 const layerSelect=document.getElementById("layerSelect");
-const presetSelect=document.getElementById("presetSelect");
 const fileInput=document.getElementById("fileInput");
 
 let layers=[],activeLayer=0,drawing=false;
-let startX=0,startY=0,pathPoints=[];
+let startX=0,startY=0;
 let tool=document.getElementById("tool").value;
 let color=document.getElementById("color").value;
 let size=document.getElementById("size").value;
 let opacity=document.getElementById("opacity").value;
 let zoom=1;
-let presets=[],undoStack=[],redoStack=[];
+let undoStack=[],redoStack=[];
 
 const previewCanvas=document.createElement("canvas");
 previewCanvas.id="previewCanvas";
@@ -97,7 +91,6 @@ document.getElementById("undo").onclick=undo;
 document.getElementById("redo").onclick=redo;
 document.getElementById("addLayer").onclick=addLayer;
 document.getElementById("toggleLayer").onclick=toggleLayer;
-document.getElementById("savePreset").onclick=savePreset;
 document.getElementById("saveProject").onclick=saveProject;
 document.getElementById("loadProject").onclick=()=>fileInput.click();
 fileInput.onchange=loadProject;
@@ -129,9 +122,10 @@ function rebuildLayers(){layers=[...container.querySelectorAll("canvas")].map(c=
 container.addEventListener("pointerdown",e=>{
     const l=layers[activeLayer];if(!l)return;
     saveState();
-    startX=e.offsetX;startY=e.offsetY;pathPoints=[[startX,startY]];
-    if(tool==="screenFill"){l.ctx.fillStyle=color;l.ctx.globalAlpha=opacity;l.ctx.fillRect(0,0,l.canvas.width,l.canvas.height);drawing=false;return;}
-    drawing=true;l.ctx.beginPath();if(tool==="brush"||tool==="eraser"){l.ctx.moveTo(e.offsetX,e.offsetY);}
+    startX=e.offsetX;startY=e.offsetY;
+    drawing=true;l.ctx.beginPath();
+    if(tool==="brush"||tool==="eraser"){l.ctx.moveTo(e.offsetX,e.offsetY);}
+    if(tool==="screenFill"){l.ctx.fillStyle=color;l.ctx.globalAlpha=opacity;l.ctx.fillRect(0,0,l.canvas.width,l.canvas.height);drawing=false;}
 });
 container.addEventListener("pointermove",e=>{
     const l=layers[activeLayer];if(!drawing||!l)return;
@@ -140,7 +134,7 @@ container.addEventListener("pointermove",e=>{
         ctx.lineWidth=size;ctx.lineCap="round";ctx.globalAlpha=opacity;
         ctx.globalCompositeOperation=tool==="eraser"?"destination-out":"source-over";
         if(tool!=="eraser")ctx.strokeStyle=color;
-        ctx.lineTo(e.offsetX,e.offsetY);ctx.stroke();pathPoints.push([e.offsetX,e.offsetY]);
+        ctx.lineTo(e.offsetX,e.offsetY);ctx.stroke();
     }
     if(tool==="rectangle"||tool==="circle"){
         previewCanvas.width=container.clientWidth;previewCanvas.height=container.clientHeight;
@@ -165,29 +159,13 @@ container.addEventListener("pointerup",e=>{
         if(tool==="circle")ctx.ellipse(startX+w/2,startY+h/2,Math.abs(w/2),Math.abs(h/2),0,0,2*Math.PI);
         ctx.stroke();
         previewCtx.clearRect(0,0,previewCanvas.width,previewCanvas.height);
-        pathPoints=[[startX,startY],[e.offsetX,e.offsetY]];
     }
     drawing=false;
 });
 
-/* SHAPE BUCKET FILL */
-container.addEventListener("pointerdown",e=>{
-    if(tool==="bucket"){
-        const l=layers[activeLayer];if(!l)return;
-        const ctx=l.ctx;ctx.save();ctx.fillStyle=color;ctx.globalAlpha=opacity;ctx.beginPath();
-        ctx.moveTo(pathPoints[0][0],pathPoints[0][1]);
-        for(let i=1;i<pathPoints.length;i++){ctx.lineTo(pathPoints[i][0],pathPoints[i][1]);}
-        ctx.closePath();ctx.fill();ctx.restore();pathPoints=[];drawing=false;
-    }
-});
-
-/* PRESETS */
-function savePreset(){presets.push({tool,color,size,opacity});presetSelect.innerHTML=presets.map((_,i)=>`<option value="${i}">Preset ${i+1}</option>`).join("");}
-presetSelect.onchange=()=>{const p=presets[presetSelect.value];if(!p)return;tool=p.tool;color=p.color;size=p.size;opacity=p.opacity;document.getElementById("tool").value=tool;document.getElementById("color").value=color;document.getElementById("size").value=size;document.getElementById("opacity").value=opacity;};
-
 /* SAVE / LOAD */
-function saveProject(){const data={presets,layers:layers.map(l=>({image:l.canvas.toDataURL(),opacity:l.opacity,visible:l.visible}))};const blob=new Blob([JSON.stringify(data)],{type:"application/json"});const a=document.createElement("a");a.href=URL.createObjectURL(blob);a.download="paint.a.json";a.click();}
-function loadProject(e){const file=e.target.files[0];if(!file)return;const reader=new FileReader();reader.onload=()=>{const data=JSON.parse(reader.result);container.innerHTML="";layers=[];data.layers.forEach(l=>{const c=document.createElement("canvas");c.width=container.clientWidth;c.height=container.clientHeight;c.style.opacity=l.opacity;c.style.display=l.visible?"block":"none";const ctx=c.getContext("2d");const img=new Image();img.onload=()=>ctx.drawImage(img,0,0);img.src=l.image;container.appendChild(c);layers.push({canvas:c,ctx,opacity:l.opacity,visible:l.visible});});presets=data.presets||[];presetSelect.innerHTML=presets.map((_,i)=>`<option value="${i}">Preset ${i+1}</option>`).join("");updateLayersUI();};reader.readAsText(file);}
+function saveProject(){const data={layers:layers.map(l=>({image:l.canvas.toDataURL(),opacity:l.opacity,visible:l.visible}))};const blob=new Blob([JSON.stringify(data)],{type:"application/json"});const a=document.createElement("a");a.href=URL.createObjectURL(blob);a.download="paint.a.json";a.click();}
+function loadProject(e){const file=e.target.files[0];if(!file)return;const reader=new FileReader();reader.onload=()=>{const data=JSON.parse(reader.result);container.innerHTML="";layers=[];data.layers.forEach(l=>{const c=document.createElement("canvas");c.width=container.clientWidth;c.height=container.clientHeight;c.style.opacity=l.opacity;c.style.display=l.visible?"block":"none";const ctx=c.getContext("2d");const img=new Image();img.onload=()=>ctx.drawImage(img,0,0);img.src=l.image;container.appendChild(c);layers.push({canvas:c,ctx,opacity:l.opacity,visible:l.visible});});updateLayersUI();};reader.readAsText(file);}
 function toggleLayer(){const l=layers[activeLayer];l.visible=!l.visible;l.canvas.style.display=l.visible?"block":"none";}
 
 /* RESPONSIVE CANVAS */
