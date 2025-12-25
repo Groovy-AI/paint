@@ -12,7 +12,7 @@ body {
     display: flex;
     flex-direction: column;
     font-family: system-ui, Arial, sans-serif;
-    background: #ffffff;
+    background: white;
 }
 
 header {
@@ -95,7 +95,7 @@ canvas {
     <label>Opacity</label>
     <input type="range" id="opacity" min="0" max="1" step="0.01" value="1">
 
-    <label>Presets</label>
+    <label>Preset</label>
     <select id="presetSelect"></select>
     <button id="savePreset">Save Preset</button>
 
@@ -132,12 +132,12 @@ let layers = [];
 let activeLayer = 0;
 let drawing = false;
 
-let tool = toolEl = document.getElementById("tool").value;
+let tool = document.getElementById("tool").value;
 let color = document.getElementById("color").value;
 let size = document.getElementById("size").value;
 let opacity = document.getElementById("opacity").value;
-
 let zoom = 1;
+
 let presets = [];
 let undoStack = [];
 let redoStack = [];
@@ -152,24 +152,23 @@ document.getElementById("zoom").oninput = e => {
     container.style.transform = `scale(${zoom})`;
 };
 
+document.getElementById("undo").onclick = undo;
+document.getElementById("redo").onclick = redo;
 document.getElementById("addLayer").onclick = addLayer;
 document.getElementById("toggleLayer").onclick = toggleLayer;
-document.getElementById("layerOpacity").oninput = e => {
-    layers[activeLayer].opacity = e.target.value;
-    layers[activeLayer].canvas.style.opacity = e.target.value;
-};
+document.getElementById("savePreset").onclick = savePreset;
+
+document.getElementById("saveProject").onclick = saveProject;
+document.getElementById("loadProject").onclick = () => fileInput.click();
+document.getElementById("fileInput").onchange = loadProject;
 
 layerSelect.onchange = () => activeLayer = Number(layerSelect.value);
 
-document.getElementById("undo").onclick = undo;
-document.getElementById("redo").onclick = redo;
-
-document.getElementById("savePreset").onclick = savePreset;
-presetSelect.onchange = loadPreset;
-
-document.getElementById("saveProject").onclick = saveProject;
-document.getElementById("loadProject").onclick = () => document.getElementById("fileInput").click();
-document.getElementById("fileInput").onchange = loadProject;
+document.getElementById("layerOpacity").oninput = e => {
+    const l = layers[activeLayer];
+    l.opacity = e.target.value;
+    l.canvas.style.opacity = e.target.value;
+};
 
 function addLayer() {
     const canvas = document.createElement("canvas");
@@ -228,28 +227,26 @@ function rebuildLayers() {
 }
 
 container.addEventListener("pointerdown", e => {
-    const layer = layers[activeLayer];
-    if (!layer) return;
+    const l = layers[activeLayer];
+    if (!l) return;
 
     saveState();
 
     if (tool === "fill") {
-        layer.ctx.fillStyle = color;
-        layer.ctx.globalAlpha = opacity;
-        layer.ctx.fillRect(e.offsetX - 1, e.offsetY - 1, 3, 3);
+        floodFill(l.ctx, Math.floor(e.offsetX), Math.floor(e.offsetY));
         return;
     }
 
     if (tool === "screenFill") {
-        layer.ctx.globalAlpha = opacity;
-        layer.ctx.fillStyle = color;
-        layer.ctx.fillRect(0, 0, layer.canvas.width, layer.canvas.height);
+        l.ctx.globalAlpha = opacity;
+        l.ctx.fillStyle = color;
+        l.ctx.fillRect(0, 0, l.canvas.width, l.canvas.height);
         return;
     }
 
     drawing = true;
-    layer.ctx.beginPath();
-    layer.ctx.moveTo(e.offsetX, e.offsetY);
+    l.ctx.beginPath();
+    l.ctx.moveTo(e.offsetX, e.offsetY);
 });
 
 container.addEventListener("pointermove", e => {
@@ -259,10 +256,7 @@ container.addEventListener("pointermove", e => {
     ctx.lineWidth = size;
     ctx.lineCap = "round";
     ctx.globalAlpha = opacity;
-
-    ctx.globalCompositeOperation =
-        tool === "eraser" ? "destination-out" : "source-over";
-
+    ctx.globalCompositeOperation = tool === "eraser" ? "destination-out" : "source-over";
     if (tool !== "eraser") ctx.strokeStyle = color;
 
     ctx.lineTo(e.offsetX, e.offsetY);
@@ -272,36 +266,77 @@ container.addEventListener("pointermove", e => {
 container.addEventListener("pointerup", () => drawing = false);
 container.addEventListener("pointerleave", () => drawing = false);
 
-/* Brush presets */
+/* BUCKET FILL */
+function floodFill(ctx, x, y) {
+    const canvas = ctx.canvas;
+    const w = canvas.width;
+    const h = canvas.height;
+
+    const img = ctx.getImageData(0, 0, w, h);
+    const data = img.data;
+
+    const index = (y * w + x) * 4;
+    const target = data.slice(index, index + 4);
+    const fill = hexToRgba(color, opacity);
+
+    if (colorsMatch(target, fill)) return;
+
+    const stack = [[x, y]];
+
+    while (stack.length) {
+        const [cx, cy] = stack.pop();
+        if (cx < 0 || cy < 0 || cx >= w || cy >= h) continue;
+
+        const i = (cy * w + cx) * 4;
+        if (!colorsMatch(data.slice(i, i + 4), target)) continue;
+
+        data[i] = fill[0];
+        data[i + 1] = fill[1];
+        data[i + 2] = fill[2];
+        data[i + 3] = fill[3];
+
+        stack.push([cx + 1, cy]);
+        stack.push([cx - 1, cy]);
+        stack.push([cx, cy + 1]);
+        stack.push([cx, cy - 1]);
+    }
+
+    ctx.putImageData(img, 0, 0);
+}
+
+function colorsMatch(a, b) {
+    return a[0] === b[0] && a[1] === b[1] && a[2] === b[2] && a[3] === b[3];
+}
+
+function hexToRgba(hex, a) {
+    return [
+        parseInt(hex.slice(1, 3), 16),
+        parseInt(hex.slice(3, 5), 16),
+        parseInt(hex.slice(5, 7), 16),
+        Math.floor(a * 255)
+    ];
+}
+
+/* PRESETS */
 function savePreset() {
-    presets.push({ color, size, opacity, tool });
-    updatePresetUI();
+    presets.push({ tool, color, size, opacity });
+    presetSelect.innerHTML = presets.map((_, i) => `<option value="${i}">Preset ${i + 1}</option>`).join("");
 }
 
-function updatePresetUI() {
-    presetSelect.innerHTML = "";
-    presets.forEach((p, i) => {
-        const o = document.createElement("option");
-        o.value = i;
-        o.textContent = `Preset ${i + 1}`;
-        presetSelect.appendChild(o);
-    });
-}
-
-function loadPreset() {
+presetSelect.onchange = () => {
     const p = presets[presetSelect.value];
     if (!p) return;
+    tool = p.tool;
     color = p.color;
     size = p.size;
     opacity = p.opacity;
-    tool = p.tool;
+    document.getElementById("tool").value = tool;
     document.getElementById("color").value = color;
     document.getElementById("size").value = size;
     document.getElementById("opacity").value = opacity;
-    document.getElementById("tool").value = tool;
-}
+};
 
-/* Project save/load */
+/* SAVE / LOAD */
 function saveProject() {
     const data = {
         presets,
@@ -330,29 +365,35 @@ function loadProject(e) {
         layers = [];
 
         data.layers.forEach(l => {
-            const canvas = document.createElement("canvas");
-            canvas.width = container.clientWidth;
-            canvas.height = container.clientHeight;
-            canvas.style.opacity = l.opacity;
-            canvas.style.display = l.visible ? "block" : "none";
-            const ctx = canvas.getContext("2d");
+            const c = document.createElement("canvas");
+            c.width = container.clientWidth;
+            c.height = container.clientHeight;
+            c.style.opacity = l.opacity;
+            c.style.display = l.visible ? "block" : "none";
+            const ctx = c.getContext("2d");
 
             const img = new Image();
             img.onload = () => ctx.drawImage(img, 0, 0);
             img.src = l.image;
 
-            container.appendChild(canvas);
-            layers.push({ canvas, ctx, opacity: l.opacity, visible: l.visible });
+            container.appendChild(c);
+            layers.push({ canvas: c, ctx, opacity: l.opacity, visible: l.visible });
         });
 
         presets = data.presets || [];
+        presetSelect.innerHTML = presets.map((_, i) => `<option value="${i}">Preset ${i + 1}</option>`).join("");
         updateLayersUI();
-        updatePresetUI();
     };
     reader.readAsText(file);
 }
 
-/* Start */
+function toggleLayer() {
+    const l = layers[activeLayer];
+    l.visible = !l.visible;
+    l.canvas.style.display = l.visible ? "block" : "none";
+}
+
+/* START */
 addLayer();
 </script>
 
